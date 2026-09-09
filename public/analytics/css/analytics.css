@@ -1,0 +1,65 @@
+/* Complementa style.css — reaproveita as variáveis de cor do tema do ERP. */
+
+.marca-icone { font-size: 26px; }
+.marca small { display: block; color: var(--texto-fraco); font-size: 11px; margin-top: 2px; }
+
+.nav-item {
+    display: block;
+    text-decoration: none;
+    color: var(--texto-fraco);
+}
+.nav-item:hover { color: var(--texto); background: var(--painel-2); }
+
+/* ------------------------------------------------------------------ topo */
+.topo { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
+
+.filtros { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.filtros label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--texto-fraco); }
+.filtros input {
+    background: var(--painel-2); border: 1px solid var(--borda); color: var(--texto);
+    border-radius: 8px; padding: 8px 10px; font-size: 13px;
+}
+
+.atalhos { display: flex; gap: 6px; }
+.atalho, .grupo-botoes button {
+    background: var(--painel-2); border: 1px solid var(--borda); color: var(--texto-fraco);
+    border-radius: 8px; padding: 8px 12px; font-size: 12px; cursor: pointer;
+}
+.atalho:hover, .grupo-botoes button:hover { color: var(--texto); border-color: var(--roxo); }
+.grupo-botoes button.ativo { background: var(--roxo); border-color: var(--roxo); color: #fff; }
+
+/* -------------------------------------------------------------- cartões */
+.cartoes { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin: 22px 0; }
+
+.cartao {
+    background: var(--painel); border: 1px solid var(--borda);
+    border-radius: var(--raio); padding: 16px 18px;
+}
+.cartao-titulo { color: var(--texto-fraco); font-size: 12px; }
+.cartao-valor { font-size: 26px; font-weight: 700; margin: 6px 0 4px; }
+
+.variacao { font-size: 12px; display: flex; align-items: center; gap: 5px; }
+.variacao.sobe { color: var(--verde); }
+.variacao.desce { color: var(--vermelho); }
+.variacao.neutra { color: var(--texto-fraco); }
+.variacao small { color: var(--texto-fraco); }
+
+/* --------------------------------------------------------------- grade */
+.grade { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.card-largo { grid-column: 1 / -1; }
+
+.card-topo { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; }
+.card-topo h3 { margin: 0; }
+.legenda-recesso { color: var(--texto-fraco); font-size: 11px; }
+
+/* Altura fixa no contêiner: o Chart.js precisa de uma altura definida para
+   calcular o canvas, senão o gráfico cresce a cada redimensionamento. */
+.area-grafico { position: relative; height: 280px; }
+.card .area-grafico + .tabela { margin-top: 16px; }
+
+.nota { color: var(--texto-fraco); font-size: 12px; margin-top: 12px; }
+.vazio-inline { color: var(--texto-fraco); padding: 20px; }
+
+@media (max-width: 900px) {
+    .grade { grid-template-columns: minmax(0, 1fr); }
+}

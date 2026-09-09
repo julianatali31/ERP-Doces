@@ -1,0 +1,17 @@
+# Segredos: o .env guarda a senha do banco e nunca deve ser versionado.
+# Use o .env.example como modelo — ele fica no repositorio, sem senha.
+.env
+.env.local
+
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+backups/
+uploads/
+*.log
+
+.vscode/
+.idea/
+.DS_Store

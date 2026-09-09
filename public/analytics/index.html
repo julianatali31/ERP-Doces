@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analytics de Vendas — ERP Doces</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <link rel="stylesheet" href="css/analytics.css">
+</head>
+<body>
+<div class="app">
+    <aside class="sidebar">
+        <div class="marca">
+            <span class="marca-icone">🍪</span>
+            <div>
+                <strong>Analytics</strong>
+                <small>Vendas em profundidade</small>
+            </div>
+        </div>
+        <nav class="nav">
+            <a class="nav-item" href="../index.html">⬅️ Voltar ao ERP</a>
+        </nav>
+        <div class="status-api" id="status-api">● carregando</div>
+    </aside>
+
+    <main class="conteudo">
+        <header class="topo">
+            <h1>Analytics de Vendas</h1>
+            <div class="filtros">
+                <label>De <input type="date" id="filtro-inicio"></label>
+                <label>Até <input type="date" id="filtro-fim"></label>
+                <div class="atalhos" id="atalhos">
+                    <button class="atalho" data-dias="30">30 dias</button>
+                    <button class="atalho" data-dias="90">90 dias</button>
+                    <button class="atalho" data-dias="365">12 meses</button>
+                </div>
+            </div>
+        </header>
+
+        <section class="cartoes" id="cartoes">
+            <div class="vazio-inline">Carregando indicadores…</div>
+        </section>
+
+        <section class="grade">
+            <div class="card card-largo">
+                <div class="card-topo">
+                    <h3>Faturamento no período</h3>
+                    <div class="grupo-botoes" id="granularidade">
+                        <button data-gran="dia">Dia</button>
+                        <button data-gran="semana" class="ativo">Semana</button>
+                        <button data-gran="mes">Mês</button>
+                    </div>
+                </div>
+                <div class="area-grafico"><canvas id="gr-faturamento"></canvas></div>
+            </div>
+
+            <div class="card">
+                <h3>Produtos no período</h3>
+                <div class="area-grafico"><canvas id="gr-produtos"></canvas></div>
+                <table class="tabela" id="tabela-produtos"></table>
+            </div>
+
+            <div class="card card-largo">
+                <div class="card-topo">
+                    <h3>Sazonalidade — média por mês</h3>
+                    <small class="legenda-recesso">Barras destacadas: meses de recesso</small>
+                </div>
+                <div class="area-grafico"><canvas id="gr-sazonalidade"></canvas></div>
+                <p class="nota" id="nota-sazonalidade"></p>
+            </div>
+        </section>
+    </main>
+</div>
+
+<script src="../js/api.js"></script>
+<script src="js/chart.umd.min.js"></script>
+<script src="js/analytics.js"></script>
+</body>
+</html>
