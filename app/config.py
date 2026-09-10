@@ -1,10 +1,29 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def ignorar_vazias(cls, valores):
+        """Trata variavel de ambiente em branco como se nao existisse.
+
+        Paineis de hospedagem criam facilmente uma variavel sem valor - por
+        importacao de .env, por exemplo. Sem isto, um PORT='' derruba a
+        aplicacao inteira na inicializacao, com erro de validacao dificil de
+        entender, mesmo que a aplicacao nunca use aquele campo.
+        """
+        if isinstance(valores, dict):
+            return {
+                chave: valor
+                for chave, valor in valores.items()
+                if not (isinstance(valor, str) and not valor.strip())
+            }
+        return valores
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/erp_confeitaria"
     database_url_sync: str = ""
