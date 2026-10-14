@@ -38,6 +38,12 @@ def preparar_url(url: str) -> tuple[str, dict]:
 
 url_banco, argumentos_conexao = preparar_url(settings.database_url)
 
+# Toda conta de data no SQL - CURRENT_DATE, data_venda::date, DATE_TRUNC -
+# usa o fuso da sessao. Sem isto o banco calcula em UTC, e uma venda feita
+# as 21h no Brasil cai no dia seguinte. O TimeZone e um dos parametros que o
+# PgBouncer (pooler do Neon) repassa, entao funciona tambem pela conexao pooled.
+argumentos_conexao["server_settings"] = {"timezone": settings.fuso_horario}
+
 engine = create_async_engine(
     url_banco,
     echo=False,
