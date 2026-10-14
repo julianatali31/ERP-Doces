@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.tempo import hoje
 from app.schemas import (
     ComparativoPeriodo,
     IndicadorComparado,
@@ -39,7 +40,7 @@ GRANULARIDADES = {"semana": ("week", "1 week"), "mes": ("month", "1 month")}
 
 def _periodo_padrao(inicio: date | None, fim: date | None) -> tuple[date, date]:
     """Sem datas informadas, usa os últimos 30 dias terminando hoje."""
-    fim = fim or date.today()
+    fim = fim or hoje()
     inicio = inicio or fim - timedelta(days=29)
     return (fim, inicio) if inicio > fim else (inicio, fim)
 
@@ -63,6 +64,21 @@ async def _meses_de_recesso(db: AsyncSession) -> set[int]:
         parte = parte.strip()
         if parte.isdigit() and 1 <= int(parte) <= 12:
             meses.add(int(parte))
+    return meses
+
+
+def _recesso_no_intervalo(inicio: date, fim: date, recesso: set[int]) -> list[str]:
+    """Nomes dos meses de recesso que o intervalo toca, na ordem do calendário.
+
+    O faturamento continua contando todas as vendas reais (dinheiro que entrou
+    no recesso entrou de verdade). Isto serve só para avisar que a comparação
+    entre as duas janelas pode estar distorcida por uma pausa planejada.
+    """
+    meses, atual = [], inicio.replace(day=1)
+    while atual <= fim:
+        if atual.month in recesso:
+            meses.append(MESES[atual.month - 1])
+        atual = (atual.replace(day=28) + timedelta(days=4)).replace(day=1)
     return meses
 
 
@@ -94,8 +110,8 @@ async def faturamento(
                        COALESCE(SUM(v.lucro), 0)        AS lucro,
                        COUNT(v.id)                      AS vendas
                 FROM generate_series(
-                        DATE_TRUNC('{unidade}', CAST(:inicio AS timestamptz)),
-                        DATE_TRUNC('{unidade}', CAST(:fim AS timestamptz)),
+                        DATE_TRUNC('{unidade}', CAST(:inicio AS date)),
+                        DATE_TRUNC('{unidade}', CAST(:fim AS date)),
                         INTERVAL '{passo}'
                      ) p
                 LEFT JOIN vendas v
@@ -115,7 +131,18 @@ async def faturamento(
         faturado, vendas = float(linha["faturamento"]), int(linha["vendas"])
         comeco = linha["inicio"]
         if granularidade == "semana":
-            rotulo = f"{comeco.strftime('%d/%m')} a {(comeco + timedelta(days=6)).strftime('%d/%m')}"
+            termino = comeco + timedelta(days=6)
+        else:
+            termino = (comeco.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+
+        # O primeiro e o ultimo periodo podem ficar cortados pelo filtro: uma
+        # semana que comeca em 07/09 com filtro a partir de 10/09 so soma de 10
+        # a 13. O rotulo mostra o trecho realmente contado, nao a semana cheia.
+        de, ate = max(comeco, inicio), min(termino, fim)
+        if (de, ate) != (comeco, termino):
+            rotulo = f"{de:%d/%m} a {ate:%d/%m}"
+        elif granularidade == "semana":
+            rotulo = f"{comeco:%d/%m} a {termino:%d/%m}"
         else:
             rotulo = f"{MESES[comeco.month - 1][:3]}/{comeco.year}"
 
@@ -176,6 +203,7 @@ async def comparativo(
 
     fat_atual, fat_anterior = float(linha["fat_atual"]), float(linha["fat_anterior"])
     vendas_atual, vendas_anterior = int(linha["vendas_atual"]), int(linha["vendas_anterior"])
+    recesso = await _meses_de_recesso(db)
 
     return ComparativoPeriodo(
         inicio=inicio,
@@ -189,6 +217,8 @@ async def comparativo(
             round(fat_atual / vendas_atual, 2) if vendas_atual else 0,
             round(fat_anterior / vendas_anterior, 2) if vendas_anterior else 0,
         ),
+        recesso_atual=_recesso_no_intervalo(inicio, fim, recesso),
+        recesso_anterior=_recesso_no_intervalo(inicio_anterior, fim_anterior, recesso),
     )
 
 
@@ -203,6 +233,11 @@ async def produtos(
 
     O /api/dashboard/produtos-mais-vendidos ranqueia desde sempre; aqui o
     recorte acompanha o filtro de data da tela.
+
+    Faturamento e lucro sao liquidos de desconto. O desconto e da venda
+    inteira, entao cada item recebe a fatia proporcional ao seu valor
+    (total / subtotal da venda). Somar vi.subtotal direto contava o preco
+    cheio: com descontos no periodo, o ranking passava do faturamento real.
     """
     inicio, fim = _periodo_padrao(inicio, fim)
 
@@ -210,17 +245,26 @@ async def produtos(
         await db.execute(
             text(
                 """
-                SELECT vi.produto_id,
-                       COALESCE(p.nome, vi.descricao, 'Sem produto') AS produto,
-                       SUM(vi.quantidade)                            AS unidades,
-                       SUM(vi.subtotal)                              AS faturamento,
-                       SUM(vi.subtotal - vi.quantidade * vi.custo_unitario) AS lucro,
-                       SUM(SUM(vi.subtotal)) OVER ()                 AS total_periodo
-                FROM venda_itens vi
-                JOIN vendas v ON v.id = vi.venda_id AND v.status = 'concluida'
-                LEFT JOIN produtos p ON p.id = vi.produto_id
-                WHERE v.data_venda::date BETWEEN :inicio AND :fim
-                GROUP BY vi.produto_id, COALESCE(p.nome, vi.descricao, 'Sem produto')
+                WITH itens AS (
+                    SELECT vi.produto_id,
+                           COALESCE(p.nome, vi.descricao, 'Sem produto') AS produto,
+                           vi.quantidade,
+                           vi.quantidade * vi.custo_unitario AS custo,
+                           -- fatia do item no total cobrado; venda de subtotal
+                           -- zero nao tem o que ratear
+                           vi.subtotal * COALESCE(v.total / NULLIF(v.subtotal, 0), 0) AS liquido
+                    FROM venda_itens vi
+                    JOIN vendas v ON v.id = vi.venda_id AND v.status = 'concluida'
+                    LEFT JOIN produtos p ON p.id = vi.produto_id
+                    WHERE v.data_venda::date BETWEEN :inicio AND :fim
+                )
+                SELECT produto_id, produto,
+                       SUM(quantidade)               AS unidades,
+                       SUM(liquido)                  AS faturamento,
+                       SUM(liquido - custo)          AS lucro,
+                       SUM(SUM(liquido)) OVER ()     AS total_periodo
+                FROM itens
+                GROUP BY produto_id, produto
                 ORDER BY unidades DESC
                 LIMIT :limite
                 """
@@ -256,7 +300,7 @@ async def sazonalidade(
     A média divide pelo número de anos que têm venda naquele mês, senão um mês
     presente em dois anos pareceria o dobro de um presente em um só.
     """
-    primeiro_ano = date.today().year - anos + 1
+    primeiro_ano = hoje().year - anos + 1
 
     linhas = (
         await db.execute(
