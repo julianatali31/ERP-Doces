@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.tempo import hoje
 from app.models import TransacaoFinanceira
 from app.schemas import TransacaoCreate, TransacaoOut, TransacaoUpdate
 
@@ -17,6 +18,7 @@ async def listar(
     fim: date | None = None,
     tipo: str | None = None,
     categoria: str | None = None,
+    status: str | None = None,
     limite: int = Query(200, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
 ):
@@ -33,6 +35,8 @@ async def listar(
         stmt = stmt.where(TransacaoFinanceira.tipo == tipo)
     if categoria:
         stmt = stmt.where(TransacaoFinanceira.categoria == categoria)
+    if status:
+        stmt = stmt.where(TransacaoFinanceira.status == status)
     return (await db.execute(stmt)).scalars().all()
 
 
@@ -86,7 +90,7 @@ async def resumo(
 async def criar(dados: TransacaoCreate, db: AsyncSession = Depends(get_db)):
     campos = dados.model_dump()
     if campos.get("data_transacao") is None:
-        campos["data_transacao"] = date.today()
+        campos["data_transacao"] = hoje()
     transacao = TransacaoFinanceira(**campos)
     db.add(transacao)
     await db.commit()
