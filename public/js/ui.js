@@ -1,9 +1,13 @@
 const moeda = (v) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const numero = (v, casas = 2) => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: casas });
 const pct = (v) => `${(Number(v) || 0).toFixed(1)}%`;
-const dataHora = (iso) => new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+
+const FUSO = 'America/Sao_Paulo';
+const dataHora = (iso) => new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: FUSO });
 const dataCurta = (iso) => new Date(iso + (iso.length === 10 ? 'T12:00:00' : '')).toLocaleDateString('pt-BR');
-const hojeISO = () => new Date().toISOString().slice(0, 10);
+// Data de hoje no fuso da empresa. toISOString() devolveria a data em UTC: a
+// partir das 21h no Brasil, ja seria o dia seguinte. (en-CA formata AAAA-MM-DD.)
+const hojeISO = () => new Date().toLocaleDateString('en-CA', { timeZone: FUSO });
 
 const escapar = (texto) => String(texto ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
