@@ -10,7 +10,9 @@
 
 const moeda = (v) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const numero = (v) => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
-const iso = (d) => d.toISOString().slice(0, 10);
+// Data no fuso da empresa. toISOString() devolve UTC: a partir das 21h no
+// Brasil o "hoje" ja seria amanha, e o periodo padrao comecava um dia adiante.
+const iso = (d) => d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 const diasEntre = (de, ate) => Math.round((ate - de) / 86400000);
 
 const CORES = {
@@ -64,6 +66,27 @@ function cartao(titulo, valor, indicador, formatador) {
         </div>`;
 }
 
+/** O faturamento soma todas as vendas reais, inclusive as do recesso. O aviso
+ * só existe para a variação não ser lida como queda (ou alta) de vendas
+ * quando uma das janelas comparadas cai num mês de pausa planejada. */
+function avisarRecesso(dados) {
+    const aviso = document.getElementById('aviso-recesso');
+    const atual = dados.recesso_atual || [];
+    const anterior = dados.recesso_anterior || [];
+    const iguais = atual.join() === anterior.join();
+
+    if (!atual.length && !anterior.length) {
+        aviso.hidden = true;
+        return;
+    }
+    const partes = [];
+    if (atual.length) partes.push(`o período escolhido inclui recesso (${atual.join(', ')})`);
+    if (anterior.length) partes.push(`o período anterior inclui recesso (${anterior.join(', ')})`);
+    aviso.innerHTML = `⚠ ${partes.join(' e ')}. O faturamento conta todas as vendas reais desses meses` +
+        (iguais ? '.' : ', então a variação pode refletir o recesso e não uma mudança nas vendas.');
+    aviso.hidden = false;
+}
+
 async function carregarCartoes() {
     const alvo = document.getElementById('cartoes');
     const dados = await API.get(`/analytics/comparativo${params(periodoSelecionado())}`);
@@ -75,6 +98,7 @@ async function carregarCartoes() {
         cartao('Ticket médio', moeda(dados.ticket_medio.atual), dados.ticket_medio, moeda),
     ].join('');
 
+    avisarRecesso(dados);
     return dados;
 }
 
@@ -132,7 +156,8 @@ async function carregarFaturamento() {
                     data: pontos.map((p) => p.lucro),
                     borderColor: CORES.verde,
                     backgroundColor: CORES.verde,
-                    tension: 0.3,
+                    // sem suavizar: cada ponto e um periodo fechado, nao ha valor entre eles
+                    tension: 0,
                     pointRadius: pontos.length > 40 ? 0 : 3,
                 },
             ],
@@ -252,10 +277,15 @@ async function carregarSazonalidade() {
             `No recesso (${recesso.map((m) => m.nome).join(', ')}) o faturamento médio é ` +
             `${moeda(mediaRecesso)}, contra ${moeda(mediaNormal)} nos demais meses — ` +
             `uma queda de ${queda.toFixed(0)}%.`;
+    } else if (!comDados.length) {
+        nota.textContent = 'Ainda não há vendas suficientes para desenhar a sazonalidade.';
+    } else if (meses.some((m) => m.recesso)) {
+        // recesso configurado, mas ainda sem venda nesses meses para comparar
+        const configurados = meses.filter((m) => m.recesso).map((m) => m.nome).join(', ');
+        nota.textContent = `Recesso configurado: ${configurados}. ` +
+            'A comparação com os demais meses aparece quando houver vendas nesse período.';
     } else {
-        nota.textContent = comDados.length
-            ? 'Defina os meses de recesso em Configurações → meses_recesso para destacá-los aqui.'
-            : 'Ainda não há vendas suficientes para desenhar a sazonalidade.';
+        nota.textContent = 'Defina os meses de recesso em Configurações para destacá-los aqui.';
     }
 }
 
