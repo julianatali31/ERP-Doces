@@ -1,3 +1,9 @@
+"""Data e hora no fuso do negocio.
+
+O servidor roda em UTC (na Vercel e no Neon). Para a confeitaria, "hoje" e
+"o dia da venda" sao do horario do Brasil: uma venda as 21h do dia 6 e do dia
+6, nao do dia 7. Toda conta de data feita em Python passa por aqui.
+"""
 
 from datetime import date, datetime
 from zoneinfo import ZoneInfo

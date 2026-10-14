@@ -98,4 +98,8 @@ async def atualizar(chave: str, dados: ConfiguracaoUpdate, db: AsyncSession = De
         await db.execute(select(Configuracao).where(Configuracao.chave == chave))
     ).scalar_one_or_none()
     if not config:
-
+        raise HTTPException(404, f"Configuracao '{chave}' nao encontrada")
+    config.valor = _validar(config, dados.valor)
+    await db.commit()
+    await db.refresh(config)
+    return _saida(config)

@@ -98,3 +98,122 @@ async def criar(dados: VendaCreate, db: AsyncSession = Depends(get_db)):
     for item in dados.itens:
         produto = None
         if item.produto_id:
+            produto = await db.get(Produto, item.produto_id)
+            if not produto:
+                raise HTTPException(404, f"Produto {item.produto_id} nao encontrado")
+
+        preco = item.preco_unitario
+        if preco is None:
+            if not produto:
+                raise HTTPException(400, "Item avulso precisa de preco_unitario")
+            preco = float(produto.preco_venda)
+
+        db.add(
+            VendaItem(
+                venda_id=venda.id,
+                produto_id=item.produto_id,
+                descricao=item.descricao or (produto.nome if produto else None),
+                quantidade=Decimal(str(item.quantidade)),
+                preco_unitario=Decimal(str(preco)),
+                custo_unitario=Decimal(produto.custo_unitario) if produto else Decimal(0),
+            )
+        )
+
+        # mesmo arredondamento do trigger venda_itens_subtotal
+        subtotal += (Decimal(str(item.quantidade)) * Decimal(str(preco))).quantize(Decimal("0.01"))
+
+        if produto and produto.receita_id and Decimal(produto.receita.rendimento) > 0:
+            fator = Decimal(str(item.quantidade)) / Decimal(produto.receita.rendimento)
+            baixas.append((produto.receita_id, fator))
+
+    # O total e GREATEST(subtotal - desconto, 0) no banco: um desconto maior
+    # que o subtotal virava total zero sem aviso nenhum.
+    if Decimal(str(dados.desconto)) > subtotal:
+        raise HTTPException(
+            400,
+            f"Desconto de R$ {dados.desconto:.2f} maior que o subtotal de R$ {subtotal:.2f}",
+        )
+
+    await db.flush()
+
+    if dados.baixar_estoque and dados.status != "cancelada":
+        for receita_id, fator in baixas:
+            await consumir_receita(
+                db, receita_id, fator, motivo="Venda", referencia=f"venda:{venda.id}"
+            )
+
+    await db.commit()
+    await db.refresh(venda)
+
+    # Toda venda concluida gera lancamento, inclusive as de valor zero. Antes
+    # havia "and venda.total > 0", e a venda #9 (desconto igual ao subtotal)
+    # sumia do Financeiro - mesmo tendo consumido insumos e dado prejuizo.
+    if venda.status == "concluida":
+        db.add(
+            TransacaoFinanceira(
+                tipo="receita",
+                categoria="vendas",
+                descricao=f"Venda #{venda.id}",
+                valor=venda.total,
+                data_transacao=local(venda.data_venda).date(),
+                forma_pagamento=venda.forma_pagamento,
+                venda_id=venda.id,
+                status="pago",
+            )
+        )
+        await db.commit()
+
+    return _saida(await _carregar(db, venda.id))
+
+
+@router.post("/{venda_id}/cancelar", response_model=VendaOut)
+async def cancelar(
+    venda_id: int,
+    devolver_estoque: bool = Query(True, description="Estorna os insumos consumidos"),
+    db: AsyncSession = Depends(get_db),
+):
+    venda = await _carregar(db, venda_id)
+    if venda.status == "cancelada":
+        raise HTTPException(400, "Venda ja esta cancelada")
+
+    if devolver_estoque:
+        movimentos = (
+            await db.execute(
+                select(func.sum(VendaItem.quantidade), VendaItem.produto_id)
+                .where(VendaItem.venda_id == venda_id)
+                .group_by(VendaItem.produto_id)
+            )
+        ).all()
+        for quantidade, produto_id in movimentos:
+            if not produto_id:
+                continue
+            produto = await db.get(Produto, produto_id)
+            if not produto or not produto.receita_id:
+                continue
+            if Decimal(produto.receita.rendimento) <= 0:
+                continue
+            fator = -Decimal(quantidade) / Decimal(produto.receita.rendimento)
+            await consumir_receita(
+                db, produto.receita_id, fator, motivo="Estorno de venda cancelada",
+                referencia=f"venda:{venda_id}",
+            )
+
+    venda.status = "cancelada"
+
+    transacoes = (
+        await db.execute(
+            select(TransacaoFinanceira).where(TransacaoFinanceira.venda_id == venda_id)
+        )
+    ).scalars().all()
+    for t in transacoes:
+        t.status = "cancelado"
+
+    await db.commit()
+    return _saida(await _carregar(db, venda_id))
+
+
+@router.delete("/{venda_id}", status_code=204)
+async def remover(venda_id: int, db: AsyncSession = Depends(get_db)):
+    venda = await _carregar(db, venda_id)
+    await db.delete(venda)
+    await db.commit()

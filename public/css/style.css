@@ -232,3 +232,57 @@ textarea { min-height: 70px; resize: vertical; }
 
 /* Link externo no menu (Analytics) — mesmo visual dos botões de navegação. */
 a.nav-item { text-decoration: none; }
+
+/* Filtros: caixa de marcar alinhada com os campos, e valor negativo em tabela. */
+.filtros .marcador {
+    display: flex; align-items: center; gap: 7px; margin: 0;
+    padding: 9px 4px; color: var(--texto); cursor: pointer; white-space: nowrap;
+}
+.filtros .marcador input { width: auto; }
+.filtros select { min-width: 130px; }
+.texto-negativo { white-space: nowrap; color: var(--vermelho); font-weight: 600; }
+
+/* Financeiro: entradas, saidas, saldo e pendentes numa faixa so, no lugar
+   de tres cartoes grandes que ocupavam meia tela. */
+.resumo-compacto {
+    display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: baseline;
+    padding: 12px 18px; margin-bottom: 14px;
+}
+.resumo-compacto > div { display: flex; align-items: baseline; gap: 8px; }
+.resumo-compacto span { font-size: 12px; color: var(--texto-fraco); }
+.resumo-compacto strong { font-size: 16px; font-variant-numeric: tabular-nums; }
+.resumo-compacto .positivo { color: var(--verde); }
+.resumo-compacto .negativo { color: var(--vermelho); }
+
+/* PDV: aviso de venda com prejuizo ou desconto invalido. */
+.alerta-pdv {
+    margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 13px;
+    background: #45320a; color: #fbbf24; border: 1px solid #6b4e10;
+}
+.alerta-pdv.erro { background: #451a1a; color: #f87171; border-color: #6b2626; }
+
+/* Configuracoes: interruptor para liga/desliga, meses clicaveis, valor travado. */
+.interruptor { position: relative; display: inline-block; width: 44px; height: 24px; margin: 0; cursor: pointer; }
+.interruptor input { opacity: 0; width: 0; height: 0; }
+.interruptor span {
+    position: absolute; inset: 0; border-radius: 999px;
+    background: var(--borda); transition: background .15s;
+}
+.interruptor span::before {
+    content: ''; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px;
+    border-radius: 50%; background: #fff; transition: transform .15s;
+}
+.interruptor input:checked + span { background: var(--roxo); }
+.interruptor input:checked + span::before { transform: translateX(20px); }
+.interruptor input:focus-visible + span { outline: 2px solid var(--roxo-claro); outline-offset: 2px; }
+
+.cfg-meses { display: flex; flex-wrap: wrap; gap: 4px; max-width: 330px; justify-content: flex-end; }
+.cfg-meses label {
+    margin: 0; padding: 4px 9px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    border: 1px solid var(--borda); color: var(--texto-fraco); background: var(--painel-2);
+}
+.cfg-meses label.ativo { background: #3b2a12; border-color: var(--amarelo); color: var(--amarelo); }
+.cfg-meses input { display: none; }
+
+.cfg-leitura { color: var(--texto-fraco); font-variant-numeric: tabular-nums; padding: 0 8px; }
+.carrinho-linha .tag { margin-left: 6px; vertical-align: middle; }

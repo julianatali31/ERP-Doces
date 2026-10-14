@@ -1,7 +1,9 @@
 const moeda = (v) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const numero = (v, casas = 2) => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: casas });
 const pct = (v) => `${(Number(v) || 0).toFixed(1)}%`;
-
+// Fuso da empresa (o mesmo de FUSO_HORARIO no servidor). Datas e horas saem
+// sempre nele, para a tela mostrar o mesmo dia que os filtros e relatórios
+// usam, mesmo que o computador de quem abre esteja em outro fuso.
 const FUSO = 'America/Sao_Paulo';
 const dataHora = (iso) => new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: FUSO });
 const dataCurta = (iso) => new Date(iso + (iso.length === 10 ? 'T12:00:00' : '')).toLocaleDateString('pt-BR');

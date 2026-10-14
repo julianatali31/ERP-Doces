@@ -63,3 +63,9 @@
 @media (max-width: 900px) {
     .grade { grid-template-columns: minmax(0, 1fr); }
 }
+
+.aviso-recesso {
+    margin: -8px 0 18px; padding: 10px 14px; font-size: 12px;
+    border: 1px solid var(--borda); border-left: 3px solid var(--amarelo, #f59e0b);
+    border-radius: var(--raio); background: var(--painel); color: var(--texto-fraco);
+}

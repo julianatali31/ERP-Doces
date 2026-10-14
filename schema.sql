@@ -145,7 +145,7 @@ CREATE TABLE IF NOT EXISTS vendas (
     custo_total     NUMERIC(14, 4) NOT NULL DEFAULT 0,
     lucro           NUMERIC(14, 4) NOT NULL DEFAULT 0,
     forma_pagamento VARCHAR(30)    NOT NULL DEFAULT 'dinheiro'
-                    CHECK (forma_pagamento IN ('dinheiro', 'pix', 'debito', 'credito', 'transferencia', 'fiado')),
+                    CHECK (forma_pagamento IN ('dinheiro', 'pix', 'debito', 'credito', 'transferencia')),
     status          VARCHAR(20)    NOT NULL DEFAULT 'concluida'
                     CHECK (status IN ('pendente', 'concluida', 'cancelada')),
     observacoes     TEXT,
