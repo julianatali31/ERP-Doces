@@ -45,6 +45,9 @@ class Settings(BaseSettings):
 
     empresa_nome: str = "Dom Cookies"
 
+    # Fuso de referencia para "que dia foi a venda". O servidor roda em UTC.
+    fuso_horario: str = "America/Sao_Paulo"
+
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
