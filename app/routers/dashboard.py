@@ -1,126 +1,71 @@
-from datetime import date, timedelta
+import os
+from collections.abc import AsyncGenerator
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
-from app.database import get_db
-from app.schemas import DashboardKpis, SerieTemporal
+from app.config import settings
 
-router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
+# Rodando como funcao serverless (Vercel): cada invocacao e um processo curto,
+# entao manter um pool aberto so acumula conexoes mortas no banco.
+SEM_ESTADO = bool(os.getenv("VERCEL"))
 
-
-@router.get("/kpis", response_model=DashboardKpis)
-async def kpis(db: AsyncSession = Depends(get_db)):
-    linha = (await db.execute(text("SELECT * FROM vw_dashboard_kpis"))).mappings().one()
-    dados = {k: float(v) for k, v in linha.items()}
-    dados["vendas_mes"] = int(dados["vendas_mes"])
-    dados["itens_estoque_baixo"] = int(dados["itens_estoque_baixo"])
-    dados["total_produtos"] = int(dados["total_produtos"])
-    dados["total_receitas"] = int(dados["total_receitas"])
-    dados["total_clientes"] = int(dados["total_clientes"])
-    dados["saldo_mes"] = dados["faturamento_mes"] - dados["despesas_mes"]
-    return DashboardKpis(**dados)
+# Parametros que o asyncpg nao aceita na URL - servicos como Neon e Supabase
+# os incluem na string que aparece no painel.
+_PARAMS_IGNORADOS = {"sslmode", "channel_binding", "options", "target_session_attrs"}
 
 
-@router.get("/vendas-por-dia", response_model=list[SerieTemporal])
-async def vendas_por_dia(dias: int = Query(30, ge=1, le=365), db: AsyncSession = Depends(get_db)):
-    """Faturamento e lucro por dia, incluindo dias sem venda."""
-    linhas = (
-        await db.execute(
-            text(
-                """
-                SELECT d::date AS dia,
-                       COALESCE(v.faturamento, 0) AS faturamento,
-                       COALESCE(v.lucro, 0)       AS lucro
-                FROM generate_series(:inicio, CURRENT_DATE, INTERVAL '1 day') d
-                LEFT JOIN vw_vendas_por_dia v ON v.dia = d::date
-                ORDER BY d
-                """
-            ),
-            {"inicio": date.today() - timedelta(days=dias - 1)},
-        )
-    ).mappings().all()
+def preparar_url(url: str) -> tuple[str, dict]:
+    """Aceita a string de conexao como ela vem do painel do provedor.
 
-    return [
-        SerieTemporal(
-            label=linha["dia"].strftime("%d/%m"),
-            valor=float(linha["faturamento"]),
-            valor_secundario=float(linha["lucro"]),
-        )
-        for linha in linhas
-    ]
+    Converte para o driver assincrono, tira os parametros que o asyncpg nao
+    entende e liga o SSL quando o banco nao e local.
+    """
+    for prefixo in ("postgresql+asyncpg://", "postgresql://", "postgres://"):
+        if url.startswith(prefixo):
+            url = "postgresql+asyncpg://" + url[len(prefixo):]
+            break
+
+    partes = urlsplit(url)
+    consulta = [(c, v) for c, v in parse_qsl(partes.query) if c not in _PARAMS_IGNORADOS]
+    url_limpa = urlunsplit(partes._replace(query=urlencode(consulta)))
+
+    local = (partes.hostname or "") in ("localhost", "127.0.0.1", "::1")
+    return url_limpa, ({} if local else {"ssl": "require"})
 
 
-@router.get("/produtos-mais-vendidos", response_model=list[SerieTemporal])
-async def produtos_mais_vendidos(
-    limite: int = Query(8, ge=1, le=50), db: AsyncSession = Depends(get_db)
-):
-    linhas = (
-        await db.execute(
-            text("SELECT produto, unidades_vendidas, faturamento FROM vw_produtos_mais_vendidos LIMIT :limite"),
-            {"limite": limite},
-        )
-    ).mappings().all()
+url_banco, argumentos_conexao = preparar_url(settings.database_url)
 
-    return [
-        SerieTemporal(
-            label=linha["produto"],
-            valor=float(linha["unidades_vendidas"]),
-            valor_secundario=float(linha["faturamento"]),
-        )
-        for linha in linhas
-    ]
+# Toda conta de data no SQL - CURRENT_DATE, data_venda::date, DATE_TRUNC -
+# usa o fuso da sessao. Sem isto o banco calcula em UTC, e uma venda feita
+# as 21h no Brasil cai no dia seguinte. O TimeZone e um dos parametros que o
+# PgBouncer (pooler do Neon) repassa, entao funciona tambem pela conexao pooled.
+argumentos_conexao["server_settings"] = {"timezone": settings.fuso_horario}
 
+engine = create_async_engine(
+    url_banco,
+    echo=False,
+    connect_args=argumentos_conexao,
+    **(
+        {"poolclass": NullPool}
+        if SEM_ESTADO
+        else {"pool_pre_ping": True, "pool_size": 10, "max_overflow": 20}
+    ),
+)
 
-@router.get("/margem-produtos")
-async def margem_produtos(db: AsyncSession = Depends(get_db)):
-    linhas = (
-        await db.execute(
-            text(
-                """
-                SELECT nome, preco_venda, custo_unitario, margem_valor,
-                       margem_lucro, classificacao_margem
-                FROM vw_produtos_margem
-                WHERE ativo
-                ORDER BY margem_lucro ASC
-                """
-            )
-        )
-    ).mappings().all()
-    return [{k: (float(v) if isinstance(v, (int, float)) or hasattr(v, "quantize") else v)
-             for k, v in linha.items()} for linha in linhas]
+SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
-@router.get("/fluxo-caixa", response_model=list[SerieTemporal])
-async def fluxo_caixa(meses: int = Query(6, ge=1, le=36), db: AsyncSession = Depends(get_db)):
-    hoje = date.today()
-    total_meses = hoje.year * 12 + hoje.month - 1 - (meses - 1)
-    primeiro_mes = date(total_meses // 12, total_meses % 12 + 1, 1)
+class Base(DeclarativeBase):
+    pass
 
-    linhas = (
-        await db.execute(
-            text(
-                """
-                SELECT m::date AS mes,
-                       COALESCE(f.receitas, 0) AS receitas,
-                       COALESCE(f.despesas, 0) AS despesas
-                FROM generate_series(
-                        :inicio, DATE_TRUNC('month', CURRENT_DATE), INTERVAL '1 month'
-                     ) m
-                LEFT JOIN vw_fluxo_caixa_mensal f ON f.mes = m::date
-                ORDER BY m
-                """
-            ),
-            {"inicio": primeiro_mes},
-        )
-    ).mappings().all()
 
-    return [
-        SerieTemporal(
-            label=linha["mes"].strftime("%m/%Y"),
-            valor=float(linha["receitas"]),
-            valor_secundario=float(linha["despesas"]),
-        )
-        for linha in linhas
-    ]
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with SessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
