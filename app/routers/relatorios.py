@@ -1,5 +1,6 @@
 import io
-from datetime import date, datetime
+from datetime import date
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Receita
+from app.tempo import agora, local
 
 router = APIRouter(prefix="/api/relatorios", tags=["Relatorios"])
 
@@ -22,7 +24,14 @@ _CABECALHO = PatternFill("solid", fgColor="7C3AED")
 _FONTE_CABECALHO = Font(color="FFFFFF", bold=True)
 
 
-def _planilha(nome_aba: str, colunas: list[str], linhas: list[tuple]) -> io.BytesIO:
+def _planilha(
+    nome_aba: str,
+    colunas: list[str],
+    linhas: list[tuple],
+    formatos: dict[str, str] | None = None,
+) -> io.BytesIO:
+    """Gera a planilha. `formatos` mapeia nome da coluna -> formato numerico
+    do Excel, para datas e valores sairem como numero e nao como texto."""
     wb = Workbook()
     ws = wb.active
     ws.title = nome_aba[:31]
@@ -37,13 +46,47 @@ def _planilha(nome_aba: str, colunas: list[str], linhas: list[tuple]) -> io.Byte
         ws.append(list(linha))
 
     for i, coluna in enumerate(colunas, start=1):
+        letra = ws.cell(row=1, column=i).column_letter
+        formato = (formatos or {}).get(coluna)
+        if formato:
+            for (celula,) in ws.iter_rows(min_row=2, min_col=i, max_col=i):
+                celula.number_format = formato
         largura = max(len(str(coluna)), *(len(str(l[i - 1])) for l in linhas)) if linhas else len(coluna)
-        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = min(largura + 4, 45)
+        ws.column_dimensions[letra].width = min(largura + 4, 45)
+
+    # Filtro no cabecalho: da para separar canceladas, um cliente, um mes...
+    if linhas:
+        ws.auto_filter.ref = ws.dimensions
+    ws.freeze_panes = "A2"
 
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
     return buffer
+
+
+_MOEDA = '"R$" #,##0.00;[Red]-"R$" #,##0.00'
+_DATA_HORA = "dd/mm/yyyy hh:mm"
+
+
+def _ratear_desconto(itens: list, desconto_venda: Decimal) -> list[Decimal]:
+    """Distribui o desconto da venda entre os itens, proporcional ao subtotal.
+
+    O desconto e da venda inteira, mas a planilha tem uma linha por item. O
+    resto do arredondamento vai para o maior item, para a soma das linhas bater
+    centavo por centavo com o desconto lancado na venda.
+    """
+    total = sum((Decimal(i.subtotal) for i in itens), Decimal(0))
+    if not desconto_venda or not total:
+        return [Decimal(0)] * len(itens)
+
+    partes = [
+        (Decimal(i.subtotal) / total * desconto_venda).quantize(Decimal("0.01"))
+        for i in itens
+    ]
+    maior = max(range(len(itens)), key=lambda k: Decimal(itens[k].subtotal))
+    partes[maior] += desconto_venda - sum(partes)
+    return partes
 
 
 def _excel_response(buffer: io.BytesIO, nome_arquivo: str) -> StreamingResponse:
@@ -60,48 +103,70 @@ async def vendas_excel(
     fim: date | None = None,
     db: AsyncSession = Depends(get_db),
 ):
+    # As datas comparam no fuso da sessao (America/Sao_Paulo, ver database.py),
+    # entao "inicio" e meia-noite no Brasil, nao em UTC.
     sql = """
-        SELECT venda_id, data_venda, cliente, produto, quantidade,
-               preco_unitario, custo_unitario, subtotal, lucro_item,
-               forma_pagamento, status
-        FROM vw_vendas_detalhe
+        SELECT d.venda_id, d.item_id, d.data_venda, d.cliente, d.produto,
+               d.quantidade, d.preco_unitario, d.custo_unitario, d.subtotal,
+               v.desconto AS desconto_venda, d.forma_pagamento, d.status
+        FROM vw_vendas_detalhe d
+        JOIN vendas v ON v.id = d.venda_id
         WHERE 1 = 1
     """
     params: dict = {}
     if inicio:
-        sql += " AND data_venda >= :inicio"
+        sql += " AND d.data_venda::date >= :inicio"
         params["inicio"] = inicio
     if fim:
-        sql += " AND data_venda < (:fim + INTERVAL '1 day')"
+        sql += " AND d.data_venda::date <= :fim"
         params["fim"] = fim
-    sql += " ORDER BY data_venda DESC, venda_id"
+    sql += " ORDER BY d.data_venda DESC, d.venda_id, d.item_id"
 
     linhas = (await db.execute(text(sql), params)).all()
 
-    dados = [
-        (
-            l.venda_id,
-            l.data_venda.strftime("%d/%m/%Y %H:%M"),
-            l.cliente or "-",
-            l.produto or "-",
-            float(l.quantidade),
-            float(l.preco_unitario),
-            float(l.custo_unitario),
-            float(l.subtotal),
-            float(l.lucro_item),
-            l.forma_pagamento,
-            l.status,
-        )
-        for l in linhas
-    ]
+    por_venda: dict[int, list] = {}
+    for linha in linhas:
+        por_venda.setdefault(linha.venda_id, []).append(linha)
+
+    dados = []
+    for itens in por_venda.values():
+        descontos = _ratear_desconto(itens, Decimal(itens[0].desconto_venda))
+        for l, desconto in zip(itens, descontos):
+            subtotal = Decimal(l.subtotal)
+            valor_final = subtotal - desconto
+            custo = Decimal(l.quantidade) * Decimal(l.custo_unitario)
+            dados.append(
+                (
+                    l.venda_id,
+                    # Excel nao aceita data com fuso: converte para o horario do
+                    # Brasil e grava como data de verdade, nao como texto.
+                    local(l.data_venda).replace(tzinfo=None),
+                    l.cliente or "-",
+                    l.produto or "-",
+                    float(l.quantidade),
+                    float(l.preco_unitario),
+                    float(subtotal),
+                    float(desconto),
+                    float(valor_final),
+                    float(custo),
+                    # lucro sobre o valor efetivamente cobrado, ja com desconto
+                    float(valor_final - custo),
+                    l.forma_pagamento,
+                    l.status,
+                )
+            )
 
     buffer = _planilha(
         "Vendas",
-        ["Venda", "Data", "Cliente", "Produto", "Qtd", "Preco unit.",
-         "Custo unit.", "Subtotal", "Lucro", "Pagamento", "Status"],
+        ["Venda", "Data", "Cliente", "Produto", "Qtd", "Preco unit.", "Subtotal",
+         "Desconto", "Valor final", "Custo", "Lucro", "Pagamento", "Status"],
         dados,
+        formatos={
+            "Data": _DATA_HORA,
+            **{c: _MOEDA for c in ("Preco unit.", "Subtotal", "Desconto", "Valor final", "Custo", "Lucro")},
+        },
     )
-    return _excel_response(buffer, f"vendas_{datetime.now():%Y%m%d}.xlsx")
+    return _excel_response(buffer, f"vendas_{agora():%Y%m%d}.xlsx")
 
 
 @router.get("/estoque.xlsx")
@@ -130,7 +195,7 @@ async def estoque_excel(db: AsyncSession = Depends(get_db)):
          "Custo unit.", "Valor em estoque", "Situacao"],
         dados,
     )
-    return _excel_response(buffer, f"estoque_{datetime.now():%Y%m%d}.xlsx")
+    return _excel_response(buffer, f"estoque_{agora():%Y%m%d}.xlsx")
 
 
 @router.get("/lista-compras")
@@ -218,7 +283,7 @@ async def ficha_tecnica_pdf(receita_id: int, db: AsyncSession = Depends(get_db))
         Paragraph(
             f"Rendimento: {float(receita.rendimento):g} {receita.unidade_rendimento} &nbsp;|&nbsp; "
             f"Tempo de preparo: {receita.tempo_preparo_min or '-'} min &nbsp;|&nbsp; "
-            f"Emitida em {datetime.now():%d/%m/%Y}",
+            f"Emitida em {agora():%d/%m/%Y}",
             estilos["Normal"],
         ),
         Spacer(1, 14),
