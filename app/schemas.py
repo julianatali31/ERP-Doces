@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 UNIDADES = Literal["g", "kg", "ml", "l", "unidade"]
-FORMAS_PAGAMENTO = Literal["dinheiro", "pix", "debito", "credito", "transferencia", "fiado"]
+FORMAS_PAGAMENTO = Literal["dinheiro", "pix", "debito", "credito", "transferencia"]
 
 
 class ORMModel(BaseModel):
@@ -339,6 +339,11 @@ class ConfiguracaoOut(ORMModel):
     tipo: str
     grupo: str
     descricao: str | None
+    # calculados no router, a partir das regras de cada chave
+    editavel: bool = True
+    controle: str = "texto"
+    opcoes: list[str] | None = None
+    em_uso: bool = True
 
 
 class ConfiguracaoUpdate(BaseModel):
@@ -379,6 +384,9 @@ class ComparativoPeriodo(BaseModel):
     lucro: IndicadorComparado
     vendas: IndicadorComparado
     ticket_medio: IndicadorComparado
+    # meses de recesso (configuracao meses_recesso) que cada janela toca
+    recesso_atual: list[str] = []
+    recesso_anterior: list[str] = []
 
 
 class ProdutoRanking(BaseModel):
