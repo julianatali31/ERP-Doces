@@ -668,7 +668,7 @@ async function telaEstoque(alvo) {
                 ${tabela([
                     { titulo: 'Quando', render: (m) => dataHora(m.criado_em) },
                     { titulo: 'Ingrediente', render: (m) => escapar(m.ingrediente_nome) },
-                    { titulo: 'Tipo', render: (m) => etiqueta(m.tipo === 'entrada' ? 'ok' : 'baixo', m.tipo) },
+                    { titulo: 'Tipo', render: (m) => etiqueta(m.tipo === 'entrada' ? 'entrada' : 'saida', m.tipo) },
                     { titulo: 'Qtd', num: true, render: (m) => numero(m.quantidade, 3) },
                     { titulo: 'Saldo', num: true, render: (m) => numero(m.quantidade_nova, 3) },
                 ], movimentos, { vazio: 'Sem movimentações ainda.' })}
@@ -808,7 +808,7 @@ async function telaFinanceiro(alvo) {
                 { titulo: 'Data', render: (t) => dataCurta(t.data_transacao) },
                 { titulo: 'Descrição', render: (t) => escapar(t.descricao) },
                 { titulo: 'Categoria', render: (t) => escapar(t.categoria) },
-                { titulo: 'Tipo', render: (t) => etiqueta(t.tipo === 'receita' ? 'ok' : 'baixo', t.tipo === 'receita' ? 'entrada' : 'saída') },
+                { titulo: 'Tipo', render: (t) => etiqueta(t.tipo === 'receita' ? 'entrada' : 'saida', t.tipo === 'receita' ? 'entrada' : 'saída') },
                 { titulo: 'Valor', num: true, render: (t) => moeda(t.valor) },
                 { titulo: 'Status', render: (t) => etiqueta(t.status) },
                 {
@@ -1024,8 +1024,10 @@ function mostrarAvisoDeConfiguracao() {
         </div>`;
 }
 
+// Só botões com data-tela navegam por aqui; o link do Analytics (sem data-tela)
+// segue o href normalmente e o botão de tema não passa por este listener.
 document.getElementById('menu').addEventListener('click', (e) => {
-    const botao = e.target.closest('.nav-item');
+    const botao = e.target.closest('.nav-item[data-tela]');
     if (botao) irPara(botao.dataset.tela);
 });
 
@@ -1034,6 +1036,22 @@ async function excluir(recurso, id) {
     await comErro(() => API.del(`/${recurso}/${id}`), 'Registro removido.');
     recarregar();
 }
+
+// =====================================================================
+// TEMA (claro / escuro)
+// O tema salvo também é aplicado por um <script> no <head> do index.html,
+// antes do CSS, para não piscar o tema claro ao carregar.
+// =====================================================================
+function aplicarTema(t) {
+    document.documentElement.dataset.tema = t;
+    try { localStorage.setItem('tema', t); } catch { /* armazenamento indisponível */ }
+}
+
+function alternarTema() {
+    aplicarTema(document.documentElement.dataset.tema === 'escuro' ? 'claro' : 'escuro');
+}
+
+aplicarTema(localStorage.getItem('tema') || 'claro');
 
 carregarIdentidade();
 verificarApi();
